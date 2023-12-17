@@ -156,6 +156,8 @@ pub struct ReplayProcessor<'a> {
     pub car_to_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_double_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_dodge: HashMap<boxcars::ActorId, boxcars::ActorId>,
+    pub disabled_boost_pads: HashMap<BoostPad, f32>,
+    previous_boost_values: HashMap<PlayerId, f32>,
     pub demolishes: Vec<DemolishInfo>,
     known_demolishes: Vec<(boxcars::DemolishFx, usize)>,
 }
@@ -197,6 +199,8 @@ impl<'a> ReplayProcessor<'a> {
             car_to_jump: HashMap::new(),
             car_to_double_jump: HashMap::new(),
             car_to_dodge: HashMap::new(),
+            disabled_boost_pads: HashMap::new(),
+            previous_boost_values: HashMap::new(),
             demolishes: Vec::new(),
             known_demolishes: Vec::new(),
         };
@@ -248,6 +252,7 @@ impl<'a> ReplayProcessor<'a> {
             self.update_mappings(frame)?;
             self.update_ball_id(frame)?;
             self.update_boost_amounts(frame, index)?;
+            self.update_boost_pads(frame, index);
             self.update_demolishes(frame, index)?;
 
             // Get the time to process for this frame. If target_time is set to
@@ -286,6 +291,7 @@ impl<'a> ReplayProcessor<'a> {
         self.car_to_double_jump = HashMap::new();
         self.car_to_dodge = HashMap::new();
         self.actor_state = ActorStateModeler::new();
+        self.disabled_boost_pads = HashMap::new();
         self.demolishes = Vec::new();
         self.known_demolishes = Vec::new();
     }
@@ -761,6 +767,56 @@ impl<'a> ReplayProcessor<'a> {
             derived_value,
             is_active,
         )
+    }
+
+    fn check_boost_value_increase(&self, player_id: &PlayerId, new_boost_amount: f32) -> SubtrActorResult<bool> {
+
+        Ok(self.previous_boost_values.get(player_id).is_some_and(|prev_boost_amount| *prev_boost_amount < new_boost_amount))
+    }
+
+    fn update_boost_pads(&mut self, frame: &boxcars::Frame, index: usize) -> SubtrActorResult<()> {
+        for player_id in self.iter_player_ids_in_order() {
+            let new_boost_amount = self.get_player_boost_level(player_id)?;
+
+            if self.check_boost_value_increase(player_id, new_boost_amount).is_ok_and(|x| x == false) {
+                continue;
+            }
+
+            let player_rb = self.get_player_rigid_body(player_id)?;
+
+            if let Some(small_pad) = self.check_small_pad_collision(player_rb) {
+                if !self.disabled_boost_pads.contains_key(small_pad) {
+                    self.disabled_boost_pads.insert(small_pad.clone(), frame.time);
+                }
+            }     
+            else if let Some(large_pad) = self.check_large_pad_collision(player_rb) {
+                if !self.disabled_boost_pads.contains_key(large_pad) {
+                    self.disabled_boost_pads.insert(large_pad.clone(), frame.time);
+                }
+            }
+        }
+    
+        Ok(()) 
+    }
+
+    fn check_large_pad_collision(&self, rb: &boxcars::RigidBody) -> Option<&BoostPad> {
+        LARGE_BOOST_PADS.iter().find(|boost_pad| {
+            rb.location.y <= boost_pad.y + LARGE_BOOST_RADIUS
+                && rb.location.y >= boost_pad.y - LARGE_BOOST_RADIUS
+                && rb.location.x <= boost_pad.x + LARGE_BOOST_RADIUS
+                && rb.location.x >= boost_pad.x - LARGE_BOOST_RADIUS
+                && rb.location.z <= LARGE_BOOST_HEIGHT
+        })
+    }
+
+    fn check_small_pad_collision(&self, rb: &boxcars::RigidBody) -> Option<&BoostPad> {
+        SMALL_BOOST_PADS.iter().find(|boost_pad| {
+            rb.location.y <= boost_pad.y + SMALL_BOOST_RADIUS
+                && rb.location.y >= boost_pad.y - SMALL_BOOST_RADIUS
+                && rb.location.x <= boost_pad.x + SMALL_BOOST_RADIUS
+                && rb.location.x >= boost_pad.x - SMALL_BOOST_RADIUS
+                && rb.location.z <= SMALL_BOOST_HEIGHT
+        })
     }
 
     fn update_demolishes(&mut self, frame: &boxcars::Frame, index: usize) -> SubtrActorResult<()> {

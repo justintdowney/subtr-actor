@@ -1,3 +1,5 @@
+use crate::util::BoostPad;
+
 pub static BALL_TYPES: [&str; 5] = [
     "Archetypes.Ball.Ball_Default",
     "Archetypes.Ball.Ball_Basketball",
@@ -32,3 +34,185 @@ pub static EMPTY_ACTOR_IDS: [boxcars::ActorId; 0] = [];
 pub static BOOST_USED_PER_SECOND: f32 = 80.0 / 0.93;
 
 pub static MAX_DEMOLISH_KNOWN_FRAMES_PASSED: usize = 100;
+
+pub const LARGE_BOOST_RADIUS: f32 = 208.0;
+pub const SMALL_BOOST_RADIUS: f32 = 149.0;
+pub const SMALL_BOOST_HEIGHT: f32 = 165.0;
+pub const LARGE_BOOST_HEIGHT: f32 = 168.0;
+
+pub static SMALL_BOOST_PADS: [BoostPad; 28] = [
+    BoostPad {
+        id: 0,
+        x: 0.0,
+        y: -4240.0,
+    },
+    BoostPad {
+        id: 1,
+        x: -1792.0,
+        y: -4184.0,
+    },
+    BoostPad {
+        id: 2,
+        x: 1792.0,
+        y: -4184.0,
+    },
+    BoostPad {
+        id: 3,
+        x: -940.0,
+        y: -3308.07,
+    },
+    BoostPad {
+        id: 4,
+        x: 940.0,
+        y: -3308.0,
+    },
+    BoostPad {
+        id: 5,
+        x: 0.0,
+        y: -2816.0,
+    },
+    BoostPad {
+        id: 6,
+        x: -3584.0,
+        y: -2484.0,
+    },
+    BoostPad {
+        id: 7,
+        x: 3584.0,
+        y: -2484.0,
+    },
+    BoostPad {
+        id: 8,
+        x: -1788.0,
+        y: -2300.0,
+    },
+    BoostPad {
+        id: 9,
+        x: 1788.0,
+        y: -2300.0,
+    },
+    BoostPad {
+        id: 10,
+        x: -2048.0,
+        y: -1036.0,
+    },
+    BoostPad {
+        id: 11,
+        x: 0.0,
+        y: -1024.0,
+    },
+    BoostPad {
+        id: 12,
+        x: 2048.0,
+        y: -1036.0,
+    },
+    BoostPad {
+        id: 13,
+        x: -1024.0,
+        y: 0.0,
+    },
+    BoostPad {
+        id: 14,
+        x: 1024.0,
+        y: 0.0,
+    },
+    BoostPad {
+        id: 15,
+        x: -2048.0,
+        y: 1036.0,
+    },
+    BoostPad {
+        id: 16,
+        x: 0.0,
+        y: 1024.0,
+    },
+    BoostPad {
+        id: 17,
+        x: 2048.0,
+        y: 1036.0,
+    },
+    BoostPad {
+        id: 18,
+        x: -1788.0,
+        y: 2300.0,
+    },
+    BoostPad {
+        id: 19,
+        x: 1788.0,
+        y: 2300.0,
+    },
+    BoostPad {
+        id: 20,
+        x: -3584.0,
+        y: 2484.0,
+    },
+    BoostPad {
+        id: 21,
+        x: 3584.0,
+        y: 2484.0,
+    },
+    BoostPad {
+        id: 22,
+        x: 0.0,
+        y: 2816.0,
+    },
+    BoostPad {
+        id: 23,
+        x: -940.0,
+        y: 3310.0,
+    },
+    BoostPad {
+        id: 24,
+        x: 940.0,
+        y: 3308.0,
+    },
+    BoostPad {
+        id: 25,
+        x: -1792.0,
+        y: 4184.0,
+    },
+    BoostPad {
+        id: 26,
+        x: 1792.0,
+        y: 4184.0,
+    },
+    BoostPad {
+        id: 27,
+        x: 0.0,
+        y: 4240.0,
+    },
+];
+
+/// Large boost pad definitions by in-game location
+pub static LARGE_BOOST_PADS: [BoostPad; 6] = [
+    BoostPad {
+        id: 28,
+        x: 3072.0,
+        y: -4096.0,
+    },
+    BoostPad {
+        id: 29,
+        x: -3072.0,
+        y: -4096.0,
+    },
+    BoostPad {
+        id: 30,
+        x: 3584.0,
+        y: 0.0,
+    },
+    BoostPad {
+        id: 31,
+        x: -3584.0,
+        y: 0.0,
+    },
+    BoostPad {
+        id: 32,
+        x: 3072.0,
+        y: 4096.0,
+    },
+    BoostPad {
+        id: 33,
+        x: -3072.0,
+        y: 4096.0,
+    },
+];
