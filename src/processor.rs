@@ -156,8 +156,8 @@ pub struct ReplayProcessor<'a> {
     pub car_to_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_double_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_dodge: HashMap<boxcars::ActorId, boxcars::ActorId>,
-    pub disabled_boost_pads: HashMap<BoostPad, f32>,
-    previous_boost_values: HashMap<PlayerId, f32>,
+    pub disabled_boost_pads: HashMap<BoostPad, usize>,
+    pub player_to_pickup: HashMap<PlayerId, BoostPickup>,
     pub demolishes: Vec<DemolishInfo>,
     known_demolishes: Vec<(boxcars::DemolishFx, usize)>,
 }
@@ -200,7 +200,7 @@ impl<'a> ReplayProcessor<'a> {
             car_to_double_jump: HashMap::new(),
             car_to_dodge: HashMap::new(),
             disabled_boost_pads: HashMap::new(),
-            previous_boost_values: HashMap::new(),
+            player_to_pickup: HashMap::new(),
             demolishes: Vec::new(),
             known_demolishes: Vec::new(),
         };
@@ -252,7 +252,8 @@ impl<'a> ReplayProcessor<'a> {
             self.update_mappings(frame)?;
             self.update_ball_id(frame)?;
             self.update_boost_amounts(frame, index)?;
-            self.update_boost_pads(frame, index);
+            self.update_boost_pickups(frame, index)?;
+            self.update_disabled_boost_pads(index)?;
             self.update_demolishes(frame, index)?;
 
             // Get the time to process for this frame. If target_time is set to
@@ -292,6 +293,7 @@ impl<'a> ReplayProcessor<'a> {
         self.car_to_dodge = HashMap::new();
         self.actor_state = ActorStateModeler::new();
         self.disabled_boost_pads = HashMap::new();
+        self.player_to_pickup = HashMap::new();
         self.demolishes = Vec::new();
         self.known_demolishes = Vec::new();
     }
@@ -769,54 +771,121 @@ impl<'a> ReplayProcessor<'a> {
         )
     }
 
-    fn check_boost_value_increase(&self, player_id: &PlayerId, new_boost_amount: f32) -> SubtrActorResult<bool> {
+    pub fn get_player_previous_boost_amount(&self, player_id: &PlayerId) -> Option<f32> {
+        if let Ok(boost_actor_id) = self.get_boost_actor_id(&player_id) {
+            let actor_state = self.get_actor_state(&boost_actor_id).unwrap();
 
-        Ok(self.previous_boost_values.get(player_id).is_some_and(|prev_boost_amount| *prev_boost_amount < new_boost_amount))
+            Some(
+                get_attribute_errors_expected!(
+                    self,
+                    &actor_state.attributes,
+                    LAST_BOOST_AMOUNT_KEY,
+                    boxcars::Attribute::Byte
+                )
+                .cloned()
+                .unwrap_or(0)
+                .into(),
+            )
+        } else {
+            None
+        }
     }
 
-    fn update_boost_pads(&mut self, frame: &boxcars::Frame, index: usize) -> SubtrActorResult<()> {
-        for player_id in self.iter_player_ids_in_order() {
-            let new_boost_amount = self.get_player_boost_level(player_id)?;
+    pub fn get_player_boost_pickup(&self, player_id: &PlayerId) -> Option<BoostPickup> {
+        self.player_to_pickup.get(player_id).copied()
+    }
 
-            if self.check_boost_value_increase(player_id, new_boost_amount).is_ok_and(|x| x == false) {
+    fn update_disabled_boost_pads(&mut self, index: usize) -> SubtrActorResult<()> {
+        let removable = self.disabled_boost_pads.iter().find(|pad| index-*pad.1 == 0);
+        if removable.is_some()
+        println!("{:?}, index: {}", removable, index);
+
+        self.disabled_boost_pads.retain(|_, initial_index| {
+            ((index - *initial_index) as f32) <= BOOST_COOLDOWN * FRAMES_PER_SECOND
+        });
+        Ok(())
+    }
+
+    fn player_boost_increased(&self, player_id: &PlayerId, frame_index: usize) -> bool {
+        if let Ok(boost_actor_id) = self.get_boost_actor_id(player_id) {
+            let actor_state = self.get_actor_state(&boost_actor_id).unwrap();
+
+            let (current_amount, current_index): (&u8, &usize) = get_attribute_and_updated!(
+                self,
+                &actor_state.attributes,
+                BOOST_AMOUNT_KEY,
+                boxcars::Attribute::Byte
+            )
+            .unwrap_or((&0, &0));
+
+            if *current_index >= frame_index {
+                return false;
+            }
+
+            let (previous_amount, previous_index): (&u8, &usize) = get_attribute_and_updated!(
+                self,
+                &actor_state.attributes,
+                LAST_BOOST_AMOUNT_KEY,
+                boxcars::Attribute::Byte
+            )
+            .unwrap_or((&0, &0));
+
+            if previous_index == current_index {
+                return false;
+            }
+
+            return previous_amount < current_amount;
+        }
+        return false;
+    }
+
+    fn update_boost_pickups(
+        &mut self,
+        frame: &boxcars::Frame,
+        index: usize,
+    ) -> SubtrActorResult<()> {
+        let boost_increased: Vec<_> = self
+            .iter_player_ids_in_order()
+            .map(|player_id| self.player_boost_increased(player_id, index))
+            .collect();
+
+        let player_ids: Vec<_> = self.iter_player_ids_in_order().cloned().collect();
+
+        // should probably check if rigid_body is within a certain range of current frame
+
+        for i in 0..player_ids.len() {
+            let player_id = &player_ids[i];
+
+            if !boost_increased[i] {
                 continue;
             }
 
-            let player_rb = self.get_player_rigid_body(player_id)?;
-
-            if let Some(small_pad) = self.check_small_pad_collision(player_rb) {
-                if !self.disabled_boost_pads.contains_key(small_pad) {
-                    self.disabled_boost_pads.insert(small_pad.clone(), frame.time);
-                }
-            }     
-            else if let Some(large_pad) = self.check_large_pad_collision(player_rb) {
-                if !self.disabled_boost_pads.contains_key(large_pad) {
-                    self.disabled_boost_pads.insert(large_pad.clone(), frame.time);
+            if let Ok(player_rb) = self.get_player_rigid_body(player_id) {
+                if let Some(small_pad) = check_small_pad_collision(&player_rb) {
+                    if !self.disabled_boost_pads.contains_key(&small_pad) {
+                        self.disabled_boost_pads.insert(small_pad.clone(), index);
+                        self.player_to_pickup
+                            .entry(player_id.clone())
+                            .and_modify(|pickup| *pickup = BoostPickup::Small)
+                            .or_insert(BoostPickup::Small);
+                    }
+                } else if let Some(large_pad) = check_large_pad_collision(&player_rb) {
+                    if !self.disabled_boost_pads.contains_key(&large_pad) {
+                        self.disabled_boost_pads.insert(large_pad.clone(), index);
+                        self.player_to_pickup
+                            .entry(player_id.clone())
+                            .and_modify(|pickup| *pickup = BoostPickup::Large)
+                            .or_insert(BoostPickup::Large);
+                    }
+                } else {
+                    self.player_to_pickup
+                        .entry(player_id.clone())
+                        .and_modify(|pickup| *pickup = BoostPickup::None)
+                        .or_insert(BoostPickup::None);
                 }
             }
         }
-    
-        Ok(()) 
-    }
-
-    fn check_large_pad_collision(&self, rb: &boxcars::RigidBody) -> Option<&BoostPad> {
-        LARGE_BOOST_PADS.iter().find(|boost_pad| {
-            rb.location.y <= boost_pad.y + LARGE_BOOST_RADIUS
-                && rb.location.y >= boost_pad.y - LARGE_BOOST_RADIUS
-                && rb.location.x <= boost_pad.x + LARGE_BOOST_RADIUS
-                && rb.location.x >= boost_pad.x - LARGE_BOOST_RADIUS
-                && rb.location.z <= LARGE_BOOST_HEIGHT
-        })
-    }
-
-    fn check_small_pad_collision(&self, rb: &boxcars::RigidBody) -> Option<&BoostPad> {
-        SMALL_BOOST_PADS.iter().find(|boost_pad| {
-            rb.location.y <= boost_pad.y + SMALL_BOOST_RADIUS
-                && rb.location.y >= boost_pad.y - SMALL_BOOST_RADIUS
-                && rb.location.x <= boost_pad.x + SMALL_BOOST_RADIUS
-                && rb.location.x >= boost_pad.x - SMALL_BOOST_RADIUS
-                && rb.location.z <= SMALL_BOOST_HEIGHT
-        })
+        Ok(())
     }
 
     fn update_demolishes(&mut self, frame: &boxcars::Frame, index: usize) -> SubtrActorResult<()> {
@@ -867,6 +936,22 @@ impl<'a> ReplayProcessor<'a> {
 
     fn get_player_id_from_car_id(&self, actor_id: &boxcars::ActorId) -> SubtrActorResult<PlayerId> {
         self.get_player_id_from_actor_id(&self.get_player_actor_id_from_car_actor_id(actor_id)?)
+    }
+
+    fn get_player_id_from_boost_id(
+        &self,
+        actor_id: &boxcars::ActorId,
+    ) -> SubtrActorResult<PlayerId> {
+        for (car_actor_id, boost_actor_id) in self.car_to_boost.iter() {
+            if actor_id != boost_actor_id {
+                continue;
+            }
+
+            return self.get_player_id_from_car_id(car_actor_id);
+        }
+        return SubtrActorError::new_result(SubtrActorErrorVariant::NoMatchingPlayerId {
+            actor_id: actor_id.clone(),
+        });
     }
 
     fn get_player_id_from_actor_id(

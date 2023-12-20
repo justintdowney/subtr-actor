@@ -1,7 +1,7 @@
-use std::hash::Hasher;
-use std::hash::Hash;
 use boxcars::{HeaderProp, RemoteId};
 use serde::Serialize;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 use crate::*;
 
@@ -334,6 +334,13 @@ pub enum SearchDirection {
     Backward,
 }
 
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+pub enum BoostPickup {
+    Large,
+    Small,
+    None,
+}
+
 #[derive(Clone, Debug)]
 pub struct BoostPad {
     pub id: u32,
@@ -360,6 +367,26 @@ impl PartialEq for BoostPad {
 }
 
 impl Eq for BoostPad {}
+
+pub(crate) fn check_large_pad_collision(rb: &boxcars::RigidBody) -> Option<&BoostPad> {
+    LARGE_BOOST_PADS.iter().find(|boost_pad| {
+        rb.location.y <= boost_pad.y + LARGE_BOOST_RADIUS
+            && rb.location.y >= boost_pad.y - LARGE_BOOST_RADIUS
+            && rb.location.x <= boost_pad.x + LARGE_BOOST_RADIUS
+            && rb.location.x >= boost_pad.x - LARGE_BOOST_RADIUS
+            && rb.location.z <= LARGE_BOOST_HEIGHT
+    })
+}
+
+pub(crate) fn check_small_pad_collision(rb: &boxcars::RigidBody) -> Option<&BoostPad> {
+    SMALL_BOOST_PADS.iter().find(|boost_pad| {
+        rb.location.y <= boost_pad.y + SMALL_BOOST_RADIUS
+            && rb.location.y >= boost_pad.y - SMALL_BOOST_RADIUS
+            && rb.location.x <= boost_pad.x + SMALL_BOOST_RADIUS
+            && rb.location.x >= boost_pad.x - SMALL_BOOST_RADIUS
+            && rb.location.z <= SMALL_BOOST_HEIGHT
+    })
+}
 
 /// Searches for an item in a slice in a specified direction and returns the
 /// first item that matches the provided predicate.

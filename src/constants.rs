@@ -32,6 +32,7 @@ pub static VEHICLE_KEY: &str = "TAGame.CarComponent_TA:Vehicle";
 pub static EMPTY_ACTOR_IDS: [boxcars::ActorId; 0] = [];
 
 pub static BOOST_USED_PER_SECOND: f32 = 80.0 / 0.93;
+pub static FRAMES_PER_SECOND: f32 = 30.0;
 
 pub static MAX_DEMOLISH_KNOWN_FRAMES_PASSED: usize = 100;
 
@@ -39,6 +40,8 @@ pub const LARGE_BOOST_RADIUS: f32 = 208.0;
 pub const SMALL_BOOST_RADIUS: f32 = 149.0;
 pub const SMALL_BOOST_HEIGHT: f32 = 165.0;
 pub const LARGE_BOOST_HEIGHT: f32 = 168.0;
+pub const BOOST_COOLDOWN: f32 = 5.0;
+pub const STARTING_BOOST_AMOUNT: f32 = 81.6;
 
 pub static SMALL_BOOST_PADS: [BoostPad; 28] = [
     BoostPad {
