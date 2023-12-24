@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{*, pad_state::PadStateModeler};
 use boxcars;
 use std::collections::HashMap;
 
@@ -156,8 +156,8 @@ pub struct ReplayProcessor<'a> {
     pub car_to_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_double_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_dodge: HashMap<boxcars::ActorId, boxcars::ActorId>,
-    pub disabled_boost_pads: HashMap<BoostPad, usize>,
     pub player_to_pickup: HashMap<PlayerId, BoostPickup>,
+    pub pad_state: PadStateModeler,
     pub demolishes: Vec<DemolishInfo>,
     known_demolishes: Vec<(boxcars::DemolishFx, usize)>,
 }
@@ -186,6 +186,7 @@ impl<'a> ReplayProcessor<'a> {
         }
         let mut processor = Self {
             actor_state: ActorStateModeler::new(),
+            pad_state: PadStateModeler::new(),
             replay,
             object_id_to_name,
             name_to_object_id,
@@ -199,7 +200,6 @@ impl<'a> ReplayProcessor<'a> {
             car_to_jump: HashMap::new(),
             car_to_double_jump: HashMap::new(),
             car_to_dodge: HashMap::new(),
-            disabled_boost_pads: HashMap::new(),
             player_to_pickup: HashMap::new(),
             demolishes: Vec::new(),
             known_demolishes: Vec::new(),
@@ -251,9 +251,9 @@ impl<'a> ReplayProcessor<'a> {
             self.actor_state.process_frame(frame, index)?;
             self.update_mappings(frame)?;
             self.update_ball_id(frame)?;
+            self.pad_state.update(index);
             self.update_boost_amounts(frame, index)?;
             self.update_boost_pickups(frame, index)?;
-            self.update_disabled_boost_pads(index)?;
             self.update_demolishes(frame, index)?;
 
             // Get the time to process for this frame. If target_time is set to
@@ -292,7 +292,7 @@ impl<'a> ReplayProcessor<'a> {
         self.car_to_double_jump = HashMap::new();
         self.car_to_dodge = HashMap::new();
         self.actor_state = ActorStateModeler::new();
-        self.disabled_boost_pads = HashMap::new();
+        self.pad_state = PadStateModeler::new();
         self.player_to_pickup = HashMap::new();
         self.demolishes = Vec::new();
         self.known_demolishes = Vec::new();
@@ -795,17 +795,6 @@ impl<'a> ReplayProcessor<'a> {
         self.player_to_pickup.get(player_id).copied()
     }
 
-    fn update_disabled_boost_pads(&mut self, index: usize) -> SubtrActorResult<()> {
-        let removable = self.disabled_boost_pads.iter().find(|pad| index-*pad.1 == 0);
-        if removable.is_some()
-        println!("{:?}, index: {}", removable, index);
-
-        self.disabled_boost_pads.retain(|_, initial_index| {
-            ((index - *initial_index) as f32) <= BOOST_COOLDOWN * FRAMES_PER_SECOND
-        });
-        Ok(())
-    }
-
     fn player_boost_increased(&self, player_id: &PlayerId, frame_index: usize) -> bool {
         if let Ok(boost_actor_id) = self.get_boost_actor_id(player_id) {
             let actor_state = self.get_actor_state(&boost_actor_id).unwrap();
@@ -848,43 +837,53 @@ impl<'a> ReplayProcessor<'a> {
             .iter_player_ids_in_order()
             .map(|player_id| self.player_boost_increased(player_id, index))
             .collect();
-
+    
         let player_ids: Vec<_> = self.iter_player_ids_in_order().cloned().collect();
-
-        // should probably check if rigid_body is within a certain range of current frame
-
+    
+        let mut pads_to_disable = Vec::new();
+    
         for i in 0..player_ids.len() {
             let player_id = &player_ids[i];
-
+    
             if !boost_increased[i] {
                 continue;
             }
-
+    
             if let Ok(player_rb) = self.get_player_rigid_body(player_id) {
                 if let Some(small_pad) = check_small_pad_collision(&player_rb) {
-                    if !self.disabled_boost_pads.contains_key(&small_pad) {
-                        self.disabled_boost_pads.insert(small_pad.clone(), index);
-                        self.player_to_pickup
-                            .entry(player_id.clone())
-                            .and_modify(|pickup| *pickup = BoostPickup::Small)
-                            .or_insert(BoostPickup::Small);
+                    if !self.pad_state.get_disabled_pads().contains(&small_pad) {
+                        pads_to_disable.push((small_pad.clone(), player_id.clone()));
                     }
                 } else if let Some(large_pad) = check_large_pad_collision(&player_rb) {
-                    if !self.disabled_boost_pads.contains_key(&large_pad) {
-                        self.disabled_boost_pads.insert(large_pad.clone(), index);
-                        self.player_to_pickup
-                            .entry(player_id.clone())
-                            .and_modify(|pickup| *pickup = BoostPickup::Large)
-                            .or_insert(BoostPickup::Large);
+                    if !self.pad_state.get_disabled_pads().contains(&large_pad) {
+                        pads_to_disable.push((large_pad.clone(), player_id.clone()));
                     }
-                } else {
+                }
+                else {
                     self.player_to_pickup
-                        .entry(player_id.clone())
-                        .and_modify(|pickup| *pickup = BoostPickup::None)
-                        .or_insert(BoostPickup::None);
+                    .entry(player_id.clone())
+                    .and_modify(|pickup| *pickup = BoostPickup::None)
+                    .or_insert(BoostPickup::None);
                 }
             }
         }
+    
+        // Now process the collected data
+        for (pad, player_id) in pads_to_disable {
+            self.pad_state.disable_pad(index, &pad);
+    
+            let pickup = match pad {
+                small_pad if small_pad.id < 28 => BoostPickup::Small,
+                large_pad if large_pad.id >= 28 => BoostPickup::Large,
+                _ => BoostPickup::None,
+            };
+    
+            self.player_to_pickup
+                .entry(player_id)
+                .and_modify(|stored_pickup| *stored_pickup = pickup)
+                .or_insert(pickup);
+        }
+    
         Ok(())
     }
 

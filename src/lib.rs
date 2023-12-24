@@ -166,6 +166,7 @@
 //! }
 //! ```
 
+pub mod pad_state;
 pub mod actor_state;
 pub mod collector;
 pub mod constants;
