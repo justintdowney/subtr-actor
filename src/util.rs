@@ -62,6 +62,10 @@ impl ReplayMeta {
     }
 }
 
+pub struct StatEvent {
+    
+}
+
 /// [`PlayerInfo`] struct provides detailed information about a specific player in the replay.
 ///
 /// This includes player's unique remote ID, player stats if available, and their name.
@@ -386,6 +390,15 @@ pub(crate) fn check_small_pad_collision(rb: &boxcars::RigidBody) -> Option<&Boos
             && rb.location.x >= boost_pad.x - SMALL_BOOST_RADIUS
             && rb.location.z <= SMALL_BOOST_HEIGHT
     })
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct PlayerStats {
+    pub score: usize,
+    pub goals: usize,
+    pub assists: usize,
+    pub saves: usize,
+    pub shots: usize,
 }
 
 /// Searches for an item in a slice in a specified direction and returns the

@@ -16,7 +16,10 @@ pub static GAME_TYPE: &str = "Archetypes.GameEvent.GameEvent_Soccar";
 pub static JUMP_TYPE: &str = "Archetypes.CarComponents.CarComponent_Jump";
 pub static PLAYER_REPLICATION_KEY: &str = "Engine.Pawn:PlayerReplicationInfo";
 pub static PLAYER_TYPE: &str = "TAGame.Default__PRI_TA";
+pub static BOOST_PICKUP_TYPE: &str = "TheWorld:PersistentLevel.VehiclePickup_Boost_TA";
 
+pub static BOOST_PICKUP_KEY: &str = "TAGame.VehiclePickup_TA:NewReplicatedPickupData";
+pub static BOOST_PICKUP_KEY_REP: &str = "TAGame.VehiclePickup_TA:ReplicatedPickupData";
 pub static BOOST_AMOUNT_KEY: &str = "TAGame.CarComponent_Boost_TA:ReplicatedBoostAmount";
 pub static COMPONENT_ACTIVE_KEY: &str = "TAGame.CarComponent_TA:ReplicatedActive";
 pub static DEMOLISH_GOAL_EXPLOSION_KEY: &str = "TAGame.Car_TA:ReplicatedDemolishGoalExplosion";
@@ -28,6 +31,12 @@ pub static SECONDS_REMAINING_KEY: &str = "TAGame.GameEvent_Soccar_TA:SecondsRema
 pub static TEAM_KEY: &str = "Engine.PlayerReplicationInfo:Team";
 pub static UNIQUE_ID_KEY: &str = "Engine.PlayerReplicationInfo:UniqueId";
 pub static VEHICLE_KEY: &str = "TAGame.CarComponent_TA:Vehicle";
+
+pub static MATCH_GOALS_KEY: &str = "TAGame.PRI_TA:MatchGoals";
+pub static MATCH_SCORE_KEY: &str = "TAGame.PRI_TA:MatchScore";
+pub static MATCH_ASSISTS_KEY: &str = "TAGame.PRI_TA:MatchAssists";
+pub static MATCH_SAVES_KEY: &str = "TAGame.PRI_TA:MatchSaves";
+pub static MATCH_SHOTS_KEY: &str = "TAGame.PRI_TA:MatchShots";
 
 pub static EMPTY_ACTOR_IDS: [boxcars::ActorId; 0] = [];
 

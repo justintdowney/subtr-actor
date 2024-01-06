@@ -1,6 +1,5 @@
-use crate::{*, pad_state::PadStateModeler};
-use boxcars;
-use std::collections::HashMap;
+use crate::*;
+use std::{collections::HashMap, path::Path, fs::File, io::Write};
 
 /// Attempts to match an attribute value with the given type.
 ///
@@ -157,9 +156,10 @@ pub struct ReplayProcessor<'a> {
     pub car_to_double_jump: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub car_to_dodge: HashMap<boxcars::ActorId, boxcars::ActorId>,
     pub player_to_pickup: HashMap<PlayerId, BoostPickup>,
-    pub pad_state: PadStateModeler,
+    known_pickups: HashMap<PlayerId, Vec<usize>>,
     pub demolishes: Vec<DemolishInfo>,
     known_demolishes: Vec<(boxcars::DemolishFx, usize)>,
+    pub player_stats: HashMap<PlayerId, PlayerStats>,
 }
 
 impl<'a> ReplayProcessor<'a> {
@@ -186,7 +186,6 @@ impl<'a> ReplayProcessor<'a> {
         }
         let mut processor = Self {
             actor_state: ActorStateModeler::new(),
-            pad_state: PadStateModeler::new(),
             replay,
             object_id_to_name,
             name_to_object_id,
@@ -201,8 +200,10 @@ impl<'a> ReplayProcessor<'a> {
             car_to_double_jump: HashMap::new(),
             car_to_dodge: HashMap::new(),
             player_to_pickup: HashMap::new(),
+            known_pickups: HashMap::new(),
             demolishes: Vec::new(),
             known_demolishes: Vec::new(),
+            player_stats: HashMap::new(),
         };
         processor
             .set_player_order_from_headers()
@@ -251,10 +252,10 @@ impl<'a> ReplayProcessor<'a> {
             self.actor_state.process_frame(frame, index)?;
             self.update_mappings(frame)?;
             self.update_ball_id(frame)?;
-            self.pad_state.update(index);
             self.update_boost_amounts(frame, index)?;
             self.update_boost_pickups(frame, index)?;
             self.update_demolishes(frame, index)?;
+            self.update_player_stats(frame, index)?;
 
             // Get the time to process for this frame. If target_time is set to
             // NextFrame, we use the time of the current frame.
@@ -292,10 +293,11 @@ impl<'a> ReplayProcessor<'a> {
         self.car_to_double_jump = HashMap::new();
         self.car_to_dodge = HashMap::new();
         self.actor_state = ActorStateModeler::new();
-        self.pad_state = PadStateModeler::new();
         self.player_to_pickup = HashMap::new();
+        self.known_pickups = HashMap::new();
         self.demolishes = Vec::new();
         self.known_demolishes = Vec::new();
+        self.player_stats = HashMap::new();
     }
 
     fn set_player_order_from_headers(&mut self) -> SubtrActorResult<()> {
@@ -401,9 +403,7 @@ impl<'a> ReplayProcessor<'a> {
     /// It's meant to be used when you don't necessarily want to process the
     /// whole replay and need only the replay's metadata.
     pub fn process_and_get_replay_meta(&mut self) -> SubtrActorResult<ReplayMeta> {
-        if self.player_to_actor_id.is_empty() {
-            self.process_long_enough_to_get_actor_ids()?;
-        }
+        self.process_long_enough_to_get_actor_ids()?;
         self.get_replay_meta()
     }
 
@@ -554,6 +554,13 @@ impl<'a> ReplayProcessor<'a> {
     /// mapping.
     fn update_mappings(&mut self, frame: &boxcars::Frame) -> SubtrActorResult<()> {
         for update in frame.updated_actors.iter() {
+            // This is poor check to see if the updated_actor has the activeactor attribute, skipping it if it is not active.
+            if let Ok(active_actor) = get_actor_attribute_matching!(self, &update.actor_id, PLAYER_REPLICATION_KEY, boxcars::Attribute::ActiveActor) {
+                if !active_actor.active {
+                    continue;
+                }
+            }
+
             macro_rules! maintain_link {
                 ($map:expr, $actor_type:expr, $attr:expr, $get_key: expr, $get_value: expr, $type:path) => {{
                     if &update.object_id == self.get_object_id_for_key(&$attr)? {
@@ -771,61 +778,27 @@ impl<'a> ReplayProcessor<'a> {
         )
     }
 
-    pub fn get_player_previous_boost_amount(&self, player_id: &PlayerId) -> Option<f32> {
-        if let Ok(boost_actor_id) = self.get_boost_actor_id(&player_id) {
-            let actor_state = self.get_actor_state(&boost_actor_id).unwrap();
+    pub fn get_player_previous_boost_amount(&self, player_id: &PlayerId) -> SubtrActorResult<u8> {
+        let boost_actor_id =  self.get_boost_actor_id(&player_id)?; 
+        let actor_state = self.get_actor_state(&boost_actor_id)?;
+        get_attribute_errors_expected!(
+            self,
+            &actor_state.attributes,                
+            LAST_BOOST_AMOUNT_KEY,
+            boxcars::Attribute::Byte
+        )
+        .cloned()
+    }
 
-            Some(
-                get_attribute_errors_expected!(
-                    self,
-                    &actor_state.attributes,
-                    LAST_BOOST_AMOUNT_KEY,
-                    boxcars::Attribute::Byte
-                )
-                .cloned()
-                .unwrap_or(0)
-                .into(),
-            )
-        } else {
-            None
-        }
+    pub fn reset_player_boost_pickups(&mut self) {
+        let player_ids: Vec<_> = self.iter_player_ids_in_order().cloned().collect(); 
+        for player_id in player_ids {
+            self.player_to_pickup.entry(player_id).and_modify(|pickup| *pickup = BoostPickup::None).or_insert(BoostPickup::None);
+        }   
     }
 
     pub fn get_player_boost_pickup(&self, player_id: &PlayerId) -> Option<BoostPickup> {
         self.player_to_pickup.get(player_id).copied()
-    }
-
-    fn player_boost_increased(&self, player_id: &PlayerId, frame_index: usize) -> bool {
-        if let Ok(boost_actor_id) = self.get_boost_actor_id(player_id) {
-            let actor_state = self.get_actor_state(&boost_actor_id).unwrap();
-
-            let (current_amount, current_index): (&u8, &usize) = get_attribute_and_updated!(
-                self,
-                &actor_state.attributes,
-                BOOST_AMOUNT_KEY,
-                boxcars::Attribute::Byte
-            )
-            .unwrap_or((&0, &0));
-
-            if *current_index >= frame_index {
-                return false;
-            }
-
-            let (previous_amount, previous_index): (&u8, &usize) = get_attribute_and_updated!(
-                self,
-                &actor_state.attributes,
-                LAST_BOOST_AMOUNT_KEY,
-                boxcars::Attribute::Byte
-            )
-            .unwrap_or((&0, &0));
-
-            if previous_index == current_index {
-                return false;
-            }
-
-            return previous_amount < current_amount;
-        }
-        return false;
     }
 
     fn update_boost_pickups(
@@ -833,60 +806,63 @@ impl<'a> ReplayProcessor<'a> {
         frame: &boxcars::Frame,
         index: usize,
     ) -> SubtrActorResult<()> {
-        let boost_increased: Vec<_> = self
-            .iter_player_ids_in_order()
-            .map(|player_id| self.player_boost_increased(player_id, index))
+        self.reset_player_boost_pickups();
+    
+        let pickups: Vec<_> = frame.updated_actors.iter().filter_map(|updated_attribute| {
+            if let boxcars::Attribute::PickupNew(updated_attribute) = &updated_attribute.attribute {
+                Some(updated_attribute)
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+        let player_pickups: Vec<_> = pickups
+            .iter()
+            .filter_map(|pickup_new| {
+                let instigator = match pickup_new.instigator {
+                    Some(car_actor_id) if car_actor_id.0 != -1 => car_actor_id,
+                    _ => {
+                        return None;
+                    }
+                };
+    
+                let player_id = match self.get_player_id_from_car_id(&instigator) {
+                    Ok(remote_id) => remote_id,
+                    _ => {
+                        return None;
+                    }
+                };
+
+                if self.known_pickups.get(&player_id).is_some_and(|pickup_frames| pickup_frames.iter().rev().any(|pickup_frame| *pickup_frame == index)) {
+                    return None;
+                }
+    
+                let player_rb = self.get_interpolated_actor_rigid_body(&instigator, frame.time, 0.0).unwrap();
+    
+                if let Some(small_boost_pad) = check_small_pad_collision(&player_rb) {
+                    self.known_pickups
+                        .entry(player_id.clone())
+                        .and_modify(|frames| frames.push(index)).or_insert(Vec::from([index]));
+                    Some((player_id.clone(), BoostPickup::Small))
+                } else if let Some(large_boost_pad) = check_large_pad_collision(&player_rb) {
+                    self.known_pickups
+                        .entry(player_id.clone())
+                        .and_modify(|frames| frames.push(index)).or_insert(Vec::from([index]));
+                    Some((player_id.clone(), BoostPickup::Large))
+                } else {
+                    Some((player_id.clone(), BoostPickup::None))
+                }
+            })
             .collect();
-    
-        let player_ids: Vec<_> = self.iter_player_ids_in_order().cloned().collect();
-    
-        let mut pads_to_disable = Vec::new();
-    
-        for i in 0..player_ids.len() {
-            let player_id = &player_ids[i];
-    
-            if !boost_increased[i] {
-                continue;
-            }
-    
-            if let Ok(player_rb) = self.get_player_rigid_body(player_id) {
-                if let Some(small_pad) = check_small_pad_collision(&player_rb) {
-                    if !self.pad_state.get_disabled_pads().contains(&small_pad) {
-                        pads_to_disable.push((small_pad.clone(), player_id.clone()));
-                    }
-                } else if let Some(large_pad) = check_large_pad_collision(&player_rb) {
-                    if !self.pad_state.get_disabled_pads().contains(&large_pad) {
-                        pads_to_disable.push((large_pad.clone(), player_id.clone()));
-                    }
-                }
-                else {
-                    self.player_to_pickup
-                    .entry(player_id.clone())
-                    .and_modify(|pickup| *pickup = BoostPickup::None)
-                    .or_insert(BoostPickup::None);
-                }
-            }
+
+        for (player_id, boost_pickup) in player_pickups {
+            self.player_to_pickup.insert(player_id.clone(), boost_pickup);
         }
-    
-        // Now process the collected data
-        for (pad, player_id) in pads_to_disable {
-            self.pad_state.disable_pad(index, &pad);
-    
-            let pickup = match pad {
-                small_pad if small_pad.id < 28 => BoostPickup::Small,
-                large_pad if large_pad.id >= 28 => BoostPickup::Large,
-                _ => BoostPickup::None,
-            };
-    
-            self.player_to_pickup
-                .entry(player_id)
-                .and_modify(|stored_pickup| *stored_pickup = pickup)
-                .or_insert(pickup);
-        }
-    
+
         Ok(())
     }
-
+    
     fn update_demolishes(&mut self, frame: &boxcars::Frame, index: usize) -> SubtrActorResult<()> {
         let new_demolishes: Vec<_> = self
             .get_active_demolish_fx()?
@@ -931,26 +907,30 @@ impl<'a> ReplayProcessor<'a> {
         })
     }
 
+    fn update_player_stats(
+        &mut self,
+        frame: &boxcars::Frame,
+        index: usize,
+    ) -> SubtrActorResult<()> {
+        let player_ids: Vec<_> = self.iter_player_ids_in_order().cloned().collect();
+        for player_id in player_ids.iter() {
+            self.player_stats.insert(
+                player_id.clone(), 
+            PlayerStats { 
+                score: *get_actor_attribute_matching!(self, &self.get_player_actor_id(player_id)?, MATCH_SCORE_KEY, boxcars::Attribute::Int).unwrap_or(&0) as usize,
+                goals: *get_actor_attribute_matching!(self, &self.get_player_actor_id(player_id)?, MATCH_GOALS_KEY, boxcars::Attribute::Int).unwrap_or(&0) as usize,
+                assists: *get_actor_attribute_matching!(self, &self.get_player_actor_id(player_id)?, MATCH_ASSISTS_KEY, boxcars::Attribute::Int).unwrap_or(&0) as usize,
+                saves: *get_actor_attribute_matching!(self, &self.get_player_actor_id(player_id)?, MATCH_SAVES_KEY, boxcars::Attribute::Int).unwrap_or(&0) as usize,
+                shots: *get_actor_attribute_matching!(self, &self.get_player_actor_id(player_id)?, MATCH_SHOTS_KEY, boxcars::Attribute::Int).unwrap_or(&0) as usize,
+            });
+        }
+        Ok(())
+    }
+
     // ID Mapping functions
 
     fn get_player_id_from_car_id(&self, actor_id: &boxcars::ActorId) -> SubtrActorResult<PlayerId> {
         self.get_player_id_from_actor_id(&self.get_player_actor_id_from_car_actor_id(actor_id)?)
-    }
-
-    fn get_player_id_from_boost_id(
-        &self,
-        actor_id: &boxcars::ActorId,
-    ) -> SubtrActorResult<PlayerId> {
-        for (car_actor_id, boost_actor_id) in self.car_to_boost.iter() {
-            if actor_id != boost_actor_id {
-                continue;
-            }
-
-            return self.get_player_id_from_car_id(car_actor_id);
-        }
-        return SubtrActorError::new_result(SubtrActorErrorVariant::NoMatchingPlayerId {
-            actor_id: actor_id.clone(),
-        });
     }
 
     fn get_player_id_from_actor_id(
@@ -1112,10 +1092,18 @@ impl<'a> ReplayProcessor<'a> {
 
     // Actor functions
 
-    fn get_object_id_for_key(&self, name: &'static str) -> SubtrActorResult<&boxcars::ObjectId> {
+    fn get_object_id_for_key(&self, name: &'static str) -> SubtrActorResult<&boxcars::ObjectId> { 
         self.name_to_object_id
             .get(name)
             .ok_or_else(|| SubtrActorError::new(SubtrActorErrorVariant::ObjectIdNotFound { name }))
+    }
+
+    fn get_object_id_for_partial_key(&self, name: &'static str) -> SubtrActorResult<Vec<&boxcars::ObjectId>> {
+        Ok(self.name_to_object_id
+            .iter()
+            .filter(|(key, _)| key.contains(name))
+            .map(|(_, object_id)| object_id)
+            .collect())
     }
 
     fn get_actor_ids_by_type(&self, name: &'static str) -> SubtrActorResult<&[boxcars::ActorId]> {
@@ -1274,6 +1262,17 @@ impl<'a> ReplayProcessor<'a> {
         name: &'static str,
     ) -> SubtrActorResult<impl Iterator<Item = (&boxcars::ActorId, &ActorState)>> {
         Ok(self.iter_actors_by_object_id(self.get_object_id_for_key(name)?))
+    }
+
+    fn iter_actors_by_partial_type_err(
+        &self,
+        name: &'static str,
+    ) -> SubtrActorResult<impl Iterator<Item = (&boxcars::ActorId, &ActorState)>> {
+        Ok(self
+            .get_object_id_for_partial_key(name)?
+            .into_iter()
+            .flat_map(|obj_id| self.iter_actors_by_object_id(obj_id))
+                .flat_map(|(id, state)| Some((id, state)).into_iter()))
     }
 
     pub fn iter_actors_by_type(
@@ -1488,6 +1487,10 @@ impl<'a> ReplayProcessor<'a> {
             )
             .cloned()
         })
+    }
+
+    pub fn get_player_stat_event(&self, player_id: &PlayerId) {
+
     }
 
     pub fn get_component_active(&self, actor_id: &boxcars::ActorId) -> SubtrActorResult<u8> {
